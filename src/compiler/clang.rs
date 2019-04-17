@@ -86,6 +86,13 @@ counted_array!(pub static ARGS: [ArgInfo<gcc::ArgData>; _] = [
     take_arg!("--target", OsString, Separated, PassThrough),
     take_arg!("-Xclang", OsString, Separated, XClang),
     take_arg!("-add-plugin", OsString, Separated, PassThrough),
+    // XXX /clang is a stronger escape hatch than -Xclang, but is has slightly
+    // different semantics and would require more code to fully support.  We only
+    // use it for a limited set of arguments right now, so we just specify those
+    // argument combinations here.  If we decide to start using more, we'll have
+    // to write more complete support.
+    flag!("-clang:-fprofile-generate", ProfileGenerate),
+    take_arg!("-clang:-fprofile-use", OsString, Concatenated, TooHard),
     flag!("-fcxx-modules", TooHardFlag),
     take_arg!("-fdebug-compilation-dir", OsString, Separated, PassThrough),
     flag!("-fmodules", TooHardFlag),
