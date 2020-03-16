@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cache::Storage;
 use crate::compiler::{
-    Cacheable, ColorMode, Compilation, CompileCommand, Compiler, CompilerArguments, CompilerHasher,
-    CompilerKind, HashResult,
+    Cacheable, CacheControl, ColorMode, Compilation, CompileCommand, Compiler, CompilerArguments, CompilerHasher,
+    CompilerKind, CompileResult, HashResult,
 };
 #[cfg(feature = "dist-client")]
 use crate::compiler::{DistPackagers, NoopOutputsRewriter};
@@ -35,6 +36,7 @@ use std::hash::Hash;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 
 use crate::errors::*;
 
@@ -58,6 +60,16 @@ where
     parsed_args: ParsedArguments,
     executable: PathBuf,
     executable_digest: String,
+    compiler: I,
+}
+
+#[derive(Debug, Clone)]
+pub struct CCompilerLocal<I>
+where
+    I: CCompilerImpl,
+{
+    parsed_args: ParsedArguments,
+    executable: PathBuf,
     compiler: I,
 }
 
@@ -222,12 +234,25 @@ impl<T: CommandCreatorSync, I: CCompilerImpl> Compiler<T> for CCompiler<I> {
         cwd: &Path,
     ) -> CompilerArguments<Box<dyn CompilerHasher<T> + 'static>> {
         match self.compiler.parse_arguments(arguments, cwd) {
-            CompilerArguments::Ok(args) => CompilerArguments::Ok(Box::new(CCompilerHasher {
-                parsed_args: args,
-                executable: self.executable.clone(),
-                executable_digest: self.executable_digest.clone(),
-                compiler: self.compiler.clone(),
-            })),
+            CompilerArguments::Ok(args) => {
+                if let Some(basename) = args.input.file_name() {
+                    if let Some(basename) = basename.to_str() {
+                        if basename.starts_with("conftest") {
+                            return CompilerArguments::Ok(Box::new(CCompilerLocal {
+                                parsed_args: args,
+                                executable: self.executable.clone(),
+                                compiler: self.compiler.clone(),
+                            }))
+                        }
+                    }
+                }
+                CompilerArguments::Ok(Box::new(CCompilerHasher {
+                    parsed_args: args,
+                    executable: self.executable.clone(),
+                    executable_digest: self.executable_digest.clone(),
+                    compiler: self.compiler.clone(),
+                }))
+            },
             CompilerArguments::CannotCache(why, extra_info) => {
                 CompilerArguments::CannotCache(why, extra_info)
             }
@@ -236,6 +261,72 @@ impl<T: CommandCreatorSync, I: CCompilerImpl> Compiler<T> for CCompiler<I> {
     }
 
     fn box_clone(&self) -> Box<dyn Compiler<T>> {
+        Box::new((*self).clone())
+    }
+}
+
+impl<T, I> CompilerHasher<T> for CCompilerLocal<I>
+where
+    T: CommandCreatorSync,
+    I: CCompilerImpl,
+{
+    fn generate_hash_key(
+        self: Box<Self>,
+        _creator: &T,
+        _cwd: PathBuf,
+        _env_vars: Vec<(OsString, OsString)>,
+        _may_dist: bool,
+        _pool: &CpuPool,
+        _rewrite_includes_only: bool,
+    ) -> SFuture<HashResult> {
+        unimplemented!()
+    }
+
+    fn get_cached_or_compile(
+        self: Box<Self>,
+        _dist_client: Result<Option<Arc<dyn dist::Client>>>,
+        creator: T,
+        _storage: Arc<dyn Storage>,
+        _arguments: Vec<OsString>,
+        cwd: PathBuf,
+        env_vars: Vec<(OsString, OsString)>,
+        _cache_control: CacheControl,
+        _pool: CpuPool,
+    ) -> SFuture<(CompileResult, process::Output)> {
+        let CCompilerLocal {
+            ref parsed_args,
+            ref executable,
+            ref compiler,
+        } = *self;
+        let mut path_transformer = dist::PathTransformer::default();
+        let (local, _dist, _cacheable) = match compiler.generate_compile_commands(
+            &mut path_transformer,
+            &executable,
+            parsed_args,
+            &cwd,
+            &env_vars,
+            // XXX
+            false,
+        ) {
+            Ok(cmds) => cmds,
+            Err(e) => return f_err(e),
+        };
+
+        Box::new(
+            local
+                .execute(&creator)
+                .map(move |o| (CompileResult::NotCacheable, o)))
+    }
+
+    fn color_mode(&self) -> ColorMode {
+        self.parsed_args.color_mode
+    }
+
+    fn output_pretty(&self) -> Cow<'_, str> {
+        self.parsed_args.output_pretty()
+    }
+
+    fn box_clone(&self) -> Box<dyn CompilerHasher<T>> {
         Box::new((*self).clone())
     }
 }
