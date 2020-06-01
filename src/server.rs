@@ -1116,8 +1116,7 @@ where
                             stats.cache_errors.increment(&kind);
                         }
                         CompileResult::CacheHit(duration) => {
-                            stats.cache_hits.increment(&kind);
-                            stats.cache_read_hit_duration += duration;
+                            stats.add_cache_read_hit_duration(&kind, duration);
                         }
                         CompileResult::CacheMiss(miss_type, dist_type, duration, future) => {
                             match dist_type {
@@ -1142,8 +1141,7 @@ where
                                     stats.cache_errors.increment(&kind);
                                 }
                             }
-                            stats.cache_misses.increment(&kind);
-                            stats.cache_read_miss_duration += duration;
+                            stats.add_cache_read_miss_duration(&kind, duration);
                             cache_write = Some(future);
                         }
                         CompileResult::NotCacheable => {
@@ -1224,8 +1222,7 @@ where
                             info.object_file_pretty,
                             util::fmt_duration_as_secs(&info.duration)
                         );
-                        me.stats.borrow_mut().cache_writes += 1;
-                        me.stats.borrow_mut().cache_write_duration += info.duration;
+                        me.stats.borrow_mut().add_cache_write_duration(info.duration);
                     }
 
                     Ok(None) => {}
@@ -1283,9 +1280,9 @@ pub struct ServerStats {
     /// The count of errors handling compile requests (per language).
     pub cache_errors: PerLanguageCount,
     /// The count of cache hits for handled compile requests (per language).
-    pub cache_hits: PerLanguageCount,
+    cache_hits: PerLanguageCount,
     /// The count of cache misses for handled compile requests (per language).
-    pub cache_misses: PerLanguageCount,
+    cache_misses: PerLanguageCount,
     /// The count of cache misses because the cache took too long to respond.
     pub cache_timeouts: u64,
     /// The count of errors reading cache entries.
@@ -1299,11 +1296,11 @@ pub struct ServerStats {
     /// The number of successful cache writes.
     pub cache_writes: u64,
     /// The total time spent writing cache entries.
-    pub cache_write_duration: Duration,
+    cache_write_duration: Duration,
     /// The total time spent reading cache hits.
-    pub cache_read_hit_duration: Duration,
+    cache_read_hit_duration: Duration,
     /// The total time spent reading cache misses.
-    pub cache_read_miss_duration: Duration,
+    cache_read_miss_duration: Duration,
     /// The count of compilation failures.
     pub compile_fails: u64,
     /// Counts of reasons why compiles were not cached.
@@ -1362,7 +1359,26 @@ impl Default for ServerStats {
     }
 }
 
+fn add_duration(field: &mut Duration, d: Duration) {
+    *field += d;
+}
+
 impl ServerStats {
+    fn add_cache_write_duration(&mut self, d: Duration) {
+        self.cache_writes += 1;
+        add_duration(&mut self.cache_write_duration, d);
+    }
+
+    fn add_cache_read_hit_duration(&mut self, kind: &CompilerKind, d: Duration) {
+        self.cache_hits.increment(kind);
+        add_duration(&mut self.cache_read_hit_duration, d);
+    }
+
+    fn add_cache_read_miss_duration(&mut self, kind: &CompilerKind, d: Duration) {
+        self.cache_misses.increment(kind);
+        add_duration(&mut self.cache_read_miss_duration, d);
+    }
+
     /// Print stats to stdout in a human-readable format.
     ///
     /// Return the formatted width of each of the (name, value) columns.
