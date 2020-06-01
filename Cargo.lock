@@ -59,6 +59,15 @@ checksum = "a4c527152e37cf757a3f78aae5a06fbeefdb07ccc535c980a3208ee3060dd544"
 
 [[package]]
 name = "arrayvec"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd9fd44efafa8690358b7408d253adf110036b88f55672a933f01d616ad9b1b9"
+dependencies = [
+ "nodrop",
+]
+
+[[package]]
+name = "arrayvec"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cff77d8686867eceff3105329d4698d96c2391c176d5d03adc90c7389162b5b8"
@@ -150,6 +159,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b41b7ea54a0c9d92199de89e20e58d49f02f8e699814ef3fdf266f6f748d15c7"
 
 [[package]]
+name = "base64"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53d1ccbaf7d9ec9537465a97bf19edc1a4e158ecb49fc16178202238c569cc42"
+
+[[package]]
 name = "bincode"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -183,7 +198,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8fb2d74254a3a0b5cac33ac9f8ed0e44aa50378d9dbb2e5d83bd21ed1dc2c8a"
 dependencies = [
  "arrayref",
- "arrayvec",
+ "arrayvec 0.5.1",
  "constant_time_eq",
 ]
 
@@ -194,7 +209,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "423897d97e11b810c9da22458400b28ec866991c711409073662eb34dc44bfff"
 dependencies = [
  "arrayref",
- "arrayvec",
+ "arrayvec 0.5.1",
  "cc",
  "cfg-if",
  "constant_time_eq",
@@ -422,6 +437,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba125de2af0df55319f41944744ad91c71113bf74a4646efff39afe1f6842db1"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "crossbeam-channel"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cced8691919c02aac3cb0a1bc2e9b73d89e832bf9a06fc579d4e71b68a2da061"
+dependencies = [
+ "crossbeam-utils 0.7.2",
+ "maybe-uninit",
 ]
 
 [[package]]
@@ -912,6 +937,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hdrhistogram"
+version = "7.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3c22708574c44e924720c5b3a116326c688e6d532f438c77c007ec8768644f9"
+dependencies = [
+ "base64 0.12.1",
+ "byteorder",
+ "crossbeam-channel",
+ "flate2",
+ "nom",
+ "num-traits 0.2.11",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1129,6 +1168,19 @@ name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
+
+[[package]]
+name = "lexical-core"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7043aa5c05dd34fb73b47acb8c3708eac428de4545ea3682ed2f11293ebd890"
+dependencies = [
+ "arrayvec 0.4.12",
+ "cfg-if",
+ "rustc_version",
+ "ryu",
+ "static_assertions",
+]
 
 [[package]]
 name = "libc"
@@ -1462,6 +1514,23 @@ dependencies = [
  "cfg-if",
  "libc",
  "void",
+]
+
+[[package]]
+name = "nodrop"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
+
+[[package]]
+name = "nom"
+version = "5.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b471253da97532da4b61552249c521e01e736071f71c1a4f7ebbfbf0a06aad6"
+dependencies = [
+ "lexical-core",
+ "memchr 2.3.3",
+ "version_check 0.9.1",
 ]
 
 [[package]]
@@ -2213,6 +2282,7 @@ dependencies = [
  "futures 0.1.29",
  "futures 0.3.5",
  "futures-cpupool",
+ "hdrhistogram",
  "hmac",
  "http",
  "hyper",
@@ -2478,6 +2548,12 @@ name = "spin"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
+
+[[package]]
+name = "static_assertions"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f3eb36b47e512f8f1c9e3d10c2c1965bc992bd9cdb024fa581e2194501c83d3"
 
 [[package]]
 name = "string"

@@ -35,10 +35,13 @@ use futures::{future, stream, Async, AsyncSink, Future, Poll, Sink, StartSend, S
 use futures_03::compat::Compat;
 use futures_cpupool::CpuPool;
 use number_prefix::{binary_prefix, Prefixed, Standalone};
+use serde;
 use std::cell::RefCell;
+use std::cmp::Ord;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs::metadata;
 use std::io::{self, Write};
 #[cfg(feature = "dist-client")]
@@ -48,6 +51,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::{ExitStatus, Output};
 use std::rc::Rc;
+use std::result;
 use std::sync::Arc;
 #[cfg(feature = "dist-client")]
 use std::sync::Mutex;
@@ -1264,6 +1268,83 @@ impl PerLanguageCount {
     }
 }
 
+#[derive(Clone, Debug)]
+struct DurationHistogram {
+    pub histogram: hdrhistogram::Histogram<u64>,
+}
+
+impl Default for DurationHistogram {
+    // Durations have nanosecond precision, but we are only going to record to
+    // millisecond precision.
+    fn default() -> DurationHistogram {
+        let histogram =
+            hdrhistogram::Histogram::<u64>::new_with_bounds(1, u64::max_value(), 3).unwrap();
+        DurationHistogram { histogram }
+    }
+}
+
+impl DurationHistogram {
+    fn add(&mut self, d: Duration) {
+        let ms = d.as_millis();
+        // If we have operations that are taking 2^64 ms, there's no
+        // harm in not knowing the precise values above that.
+        let ms = if ms > u64::max_value as u128 {
+            u64::max_value as u128
+        } else {
+            ms
+        } as u64;
+        // The bounds on histogram creation assure that this will not panic.
+        self.histogram += ms;
+    }
+
+    fn mean(&self) -> Duration {
+        Duration::from_secs_f64(self.histogram.mean() / 1000.0f64)
+    }
+}
+
+// Following the example in the hdrhistogram documentation.
+impl serde::Serialize for DurationHistogram {
+    fn serialize<S>(&self, serializer: S) -> result::Result<S::Ok, S::Error>
+        where S: serde::Serializer
+    {
+        use hdrhistogram::serialization::Serializer;
+        use serde::ser::Error;
+
+        let mut vec = Vec::new();
+        hdrhistogram::serialization::V2Serializer::new()
+            .serialize(&self.histogram, &mut vec)
+            .map_err(|_| S::Error::custom("could not V2 serialize histogram"))?;
+        serializer.serialize_bytes(&vec)
+    }
+}
+
+struct DurationHistogramVisitor;
+
+impl<'de> serde::de::Visitor<'de> for DurationHistogramVisitor {
+    type Value = DurationHistogram;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a histogram instance")
+    }
+
+    fn visit_borrowed_bytes<E>(self, value: &'de [u8]) -> result::Result<Self::Value, E>
+        where E: serde::de::Error,
+    {
+        let mut hde = hdrhistogram::serialization::Deserializer::new();
+        let histogram = hde.deserialize(&mut io::Cursor::new(value))
+            .map_err(serde::de::Error::custom)?;
+        Ok(DurationHistogram { histogram })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DurationHistogram {
+    fn deserialize<D>(deserializer: D) -> result::Result<DurationHistogram, D::Error>
+        where D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(DurationHistogramVisitor)
+    }
+}
+
 /// Statistics about the server.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServerStats {
@@ -1296,11 +1377,11 @@ pub struct ServerStats {
     /// The number of successful cache writes.
     pub cache_writes: u64,
     /// The total time spent writing cache entries.
-    cache_write_duration: Duration,
+    cache_write_duration: DurationHistogram,
     /// The total time spent reading cache hits.
-    cache_read_hit_duration: Duration,
+    cache_read_hit_duration: DurationHistogram,
     /// The total time spent reading cache misses.
-    cache_read_miss_duration: Duration,
+    cache_read_miss_duration: DurationHistogram,
     /// The count of compilation failures.
     pub compile_fails: u64,
     /// Counts of reasons why compiles were not cached.
@@ -1348,9 +1429,9 @@ impl Default for ServerStats {
             forced_recaches: u64::default(),
             cache_write_errors: u64::default(),
             cache_writes: u64::default(),
-            cache_write_duration: Duration::new(0, 0),
-            cache_read_hit_duration: Duration::new(0, 0),
-            cache_read_miss_duration: Duration::new(0, 0),
+            cache_write_duration: DurationHistogram::default(),
+            cache_read_hit_duration: DurationHistogram::default(),
+            cache_read_miss_duration: DurationHistogram::default(),
             compile_fails: u64::default(),
             not_cached: HashMap::new(),
             dist_compiles: HashMap::new(),
@@ -1359,24 +1440,20 @@ impl Default for ServerStats {
     }
 }
 
-fn add_duration(field: &mut Duration, d: Duration) {
-    *field += d;
-}
-
 impl ServerStats {
     fn add_cache_write_duration(&mut self, d: Duration) {
         self.cache_writes += 1;
-        add_duration(&mut self.cache_write_duration, d);
+        self.cache_write_duration.add(d);
     }
 
     fn add_cache_read_hit_duration(&mut self, kind: &CompilerKind, d: Duration) {
         self.cache_hits.increment(kind);
-        add_duration(&mut self.cache_read_hit_duration, d);
+        self.cache_read_hit_duration.add(d);
     }
 
     fn add_cache_read_miss_duration(&mut self, kind: &CompilerKind, d: Duration) {
         self.cache_misses.increment(kind);
-        add_duration(&mut self.cache_read_miss_duration, d);
+        self.cache_read_miss_duration.add(d);
     }
 
     /// Print stats to stdout in a human-readable format.
@@ -1402,12 +1479,8 @@ impl ServerStats {
         }
 
         macro_rules! set_duration_stat {
-            ($vec:ident, $dur:expr, $num:expr, $name:expr) => {{
-                let s = if $num > 0 {
-                    $dur / $num as u32
-                } else {
-                    Default::default()
-                };
+            ($vec:ident, $dur:expr, $name:expr) => {{
+                let s = $dur.mean();
                 // name, value, suffix length
                 $vec.push(($name.to_string(), util::fmt_duration_as_secs(&s), 2));
             }};
@@ -1452,19 +1525,16 @@ impl ServerStats {
         set_duration_stat!(
             stats_vec,
             self.cache_write_duration,
-            self.cache_writes,
             "Average cache write"
         );
         set_duration_stat!(
             stats_vec,
             self.cache_read_miss_duration,
-            self.cache_misses.all(),
             "Average cache read miss"
         );
         set_duration_stat!(
             stats_vec,
             self.cache_read_hit_duration,
-            self.cache_hits.all(),
             "Average cache read hit"
         );
         set_stat!(
